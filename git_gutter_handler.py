@@ -12,6 +12,9 @@ except ImportError:
     from view_collection import ViewCollection
 
 
+class GitGutterHandlerError(Exception):
+    pass
+
 class GitGutterHandler:
 
     def __init__(self, view):
@@ -142,15 +145,20 @@ class GitGutterHandler:
         if self.on_disk() and self.git_path:
             self.update_git_file()
             self.update_buf_file()
-            args = [
-                self.git_binary_path, 'diff', '-U0', '--no-color',
-                self.ignore_whitespace,
-                self.patience_switch,
-                self.git_temp_file.name,
-                self.buf_temp_file.name,
-            ]
-            args = list(filter(None, args))  # Remove empty args
-            results = self.run_command(args)
+            cwd = os.getcwd()
+            try:
+                os.chdir(os.path.dirname(self.git_temp_file.name))
+                args = [
+                    self.git_binary_path, 'diff', '-U0', '--no-color',
+                    self.ignore_whitespace,
+                    self.patience_switch,
+                    os.path.relpath(self.git_temp_file.name),
+                    os.path.relpath(self.buf_temp_file.name),
+                ]
+                args = list(filter(None, args))  # Remove empty args
+                results = self.run_command(args)
+            finally:
+                os.chdir(cwd)
             encoding = self._get_view_encoding()
             try:
                 decoded_results = results.decode(encoding.replace(' ', ''))
@@ -229,9 +237,12 @@ class GitGutterHandler:
         if os.name == 'nt':
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        proc = subprocess.Popen(args, stdout=subprocess.PIPE,
-                                startupinfo=startupinfo, stderr=subprocess.PIPE)
-        return proc.stdout.read()
+        proc = subprocess.Popen(args, startupinfo=startupinfo,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = proc.communicate()
+        if err:
+            raise GitGutterHandlerError('Command %r returned %r' % (args, err))
+        return out
 
     def load_settings(self):
         self.settings = sublime.load_settings('GitGutter.sublime-settings')
